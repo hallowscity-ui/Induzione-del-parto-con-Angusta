@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<title>Gestione Induzione del Parto</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+body { margin:0; font-family: Arial, sans-serif; display:flex; height:100vh; }
+#sidebar { width:260px; background:#2c3e50; color:#fff; padding:15px; box-sizing:border-box; }
+#sidebar h2 { margin-top:0; }
+#sidebar input, #sidebar button { width:100%; margin-bottom:8px; padding:6px; }
+#sidebar ul { list-style:none; padding:0; margin:0; }
+#sidebar li {
+  background:#34495e; margin-bottom:5px; padding:6px;
+  border-radius:4px; display:flex; align-items:center;
+}
+#sidebar li.active { background:#16a085; }
+#sidebar li span { flex:1; cursor:pointer; }
+#main { flex:1; background:#ecf0f1; padding:15px; overflow-y:auto; }
+table { width:100%; border-collapse:collapse; background:#fff; }
+th, td { border:1px solid #ccc; padding:6px; text-align:center; }
+th { background:#eee; }
+button { padding:4px 8px; }
+.locked { color:#999; font-style:italic; }
+</style>
+</head>
+
+<body>
+
+<div id="sidebar">
+  <h2>Pazienti</h2>
+  <input id="nomePaziente" placeholder="Nome paziente">
+  <input type="time" id="primaDose">
+  <button onclick="aggiungiPaziente()">Aggiungi paziente</button>
+  <ul id="listaPazienti"></ul>
+</div>
+
+<div id="main">
+  <h2 id="titoloPaziente">Seleziona un paziente</h2>
+  <div id="scheda"></div>
+</div>
+
+<script>
+let pazienti = [];
+let pazienteSelezionato = null;
+
+/* ------------------ UTIL ------------------ */
+function formatta(d) {
+  return d.toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" });
+}
+
+function label(tipo) {
+  if (tipo === "inizio") return "Inizio tracciato";
+  if (tipo === "somministrazione") return "Somministrazione";
+  return "Fine tracciato";
+}
+
+/* ------------------ PAZIENTI ------------------ */
+function aggiungiPaziente() {
+  const nome = nomePaziente.value.trim();
+  const ora = primaDose.value;
+  if (!nome || !ora) {
+    alert("Inserire nome paziente e orario della prima somministrazione");
+    return;
+  }
+
+  const [h, m] = ora.split(":").map(Number);
+  const base = new Date();
+  base.setHours(h, m, 0, 0);
+
+  const eventi = [];
+
+  for (let d = 0; d < 4; d++) {
+    const som = new Date(base.getTime() + d * 4 * 60 * 60 * 1000);
+
+    eventi.push({
+      tipo: "inizio",
+      dose: d,
+      previsto: new Date(som.getTime() - 30 * 60000),
+      reale: null,
+      notificato: false
+    });
+
+    eventi.push({
+      tipo: "somministrazione",
+      dose: d,
+      previsto: new Date(som.getTime()),
+      reale: null,
+      notificato: false
+    });
+
+    eventi.push({
+      tipo: "fine",
+      dose: d,
+      previsto: new Date(som.getTime() + 60 * 60000),
+      reale: null,
+      notificato: false
+    });
+  }
+
+  pazienti.push({ nome, eventi });
+  salva();
+  selezionaPaziente(pazienti.length - 1);
+}
+
+/* ------------------ UI ------------------ */
+function selezionaPaziente(i) {
+  pazienteSelezionato = i;
+  aggiornaSidebar();
+  mostraScheda();
+}
+
+function aggiornaSidebar() {
+  listaPazienti.innerHTML = "";
+  pazienti.forEach((p, i) => {
+    const li = document.createElement("li");
+    if (i === pazienteSelezionato) li.classList.add("active");
+
+    const span = document.createElement("span");
+    span.textContent = p.nome;
+    span.onclick = () => selezionaPaziente(i);
+
+    const btn = document.createElement("button");
+    btn.textContent = "✕";
+    btn.onclick = () => eliminaPaziente(i);
+
+    li.appendChild(span);
+    li.appendChild(btn);
+    listaPazienti.appendChild(li);
+  });
+}
+
+function mostraScheda() {
+  if (pazienteSelezionato === null) return;
+
+  const p = pazienti[pazienteSelezionato];
+  titoloPaziente.textContent = p.nome;
+  scheda.innerHTML = "";
+
+  const table = document.createElement("table");
+  table.innerHTML = `
+    <tr>
+      <th>Dose</th>
+      <th>Evento</th>
+      <th>Previsto</th>
+      <th>Reale</th>
+      <th></th>
+    </tr>
+  `;
+
+  p.eventi.forEach((e, i) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${e.dose + 1}</td>
+      <td>${label(e.tipo)}</td>
+      <td>${formatta(e.previsto)}</td>
+      <td>${e.reale ? formatta(e.reale) : "—"}</td>
+      <td>
+        ${puoRegistrare(i)
+          ? `<button onclick="registraEvento(${i})">Registra</button>`
+          : `<span class="locked">bloccato</span>`
+        }
+      </td>
+    `;
+    table.appendChild(tr);
+  });
+
+  scheda.appendChild(table);
+}
+
+/* ------------------ BLOCCO ANTI-ERRORI ------------------ */
+function puoRegistrare(index) {
+  const ev = pazienti[pazienteSelezionato].eventi;
+  const e = ev[index];
+
+  if (e.tipo === "inizio") return true;
+  if (e.tipo === "somministrazione") return ev[index - 1].reale !== null;
+  if (e.tipo === "fine") return ev[index - 1].reale !== null;
+  return false;
+}
+
+/* ------------------ REGISTRA EVENTO ------------------ */
+function registraEvento(index) {
+  const p = pazienti[pazienteSelezionato];
+  const e = p.eventi[index];
+  e.reale = new Date();
+
+  if (e.tipo === "inizio") {
+    const nuovaSom = new Date(e.reale.getTime() + 30 * 60000);
+    ricalcolaDaDose(e.dose, nuovaSom);
+  }
+
+  if (e.tipo === "somministrazione") {
+    ricalcolaDaDose(e.dose, e.reale);
+  }
+
+  salva();
+  mostraScheda();
+}
+
+/* ------------------ RICALCOLO CORE ------------------ */
+function ricalcolaDaDose(doseIndex, nuovaSom) {
+  const ev = pazienti[pazienteSelezionato].eventi;
+
+  for (let d = doseIndex; d < 4; d++) {
+    const base = new Date(nuovaSom.getTime() + (d - doseIndex) * 4 * 60 * 60 * 1000);
+
+    ev[d * 3].previsto     = new Date(base.getTime() - 30 * 60000);
+    ev[d * 3 + 1].previsto = new Date(base.getTime());
+    ev[d * 3 + 2].previsto = new Date(base.getTime() + 60 * 60000);
+
+    ev[d * 3].notificato = false;
+    ev[d * 3 + 1].notificato = false;
+    ev[d * 3 + 2].notificato = false;
+  }
+}
+
+/* ------------------ NOTIFICHE ------------------ */
+function controlloNotifiche() {
+  if (!("Notification" in window)) return;
+
+  const now = new Date();
+
+  pazienti.forEach(p => {
+    p.eventi.forEach(e => {
+      if (!e.notificato && now >= e.previsto) {
+        Notification.requestPermission().then(perm => {
+          if (perm === "granted") {
+            new Notification(`${label(e.tipo)} – ${p.nome}`);
+          }
+        });
+        e.notificato = true;
+        salva();
+      }
+    });
+  });
+}
+
+/* ------------------ STORAGE ------------------ */
+function salva() {
+  localStorage.setItem("induzione", JSON.stringify(pazienti));
+}
+
+function carica() {
+  const dati = localStorage.getItem("induzione");
+  if (dati) {
+    pazienti = JSON.parse(dati);
+    pazienti.forEach(p =>
+      p.eventi.forEach(e => {
+        e.previsto = new Date(e.previsto);
+        if (e.reale) e.reale = new Date(e.reale);
+      })
+    );
+    aggiornaSidebar();
+  }
+  Notification.requestPermission();
+  controlloNotifiche();
+}
+
+function eliminaPaziente(i) {
+  if (!confirm("Eliminare questo paziente?")) return;
+  pazienti.splice(i, 1);
+  pazienteSelezionato = null;
+  salva();
+  aggiornaSidebar();
+  scheda.innerHTML = "";
+  titoloPaziente.textContent = "Seleziona un paziente";
+}
+
+/* ------------------ AVVIO ------------------ */
+setInterval(controlloNotifiche, 60000);
+window.onload = carica;
+</script>
+
+</body>
+</html>
