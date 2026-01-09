@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<title>Ciclo induzione parto</title>
+<style>
+body { font-family: Arial; margin: 30px; background: #f7f7f7; }
+table { width:100%; border-collapse: collapse; background:white; margin-top:20px; }
+th, td { border:1px solid #ccc; padding:8px; text-align:center; }
+th { background:#eee; }
+button { padding:5px 10px; margin:2px; }
+small { color:#555; }
+</style>
+</head>
+<body>
+
+<h1>Ciclo di induzione</h1>
+
+<label>Ora prima somministrazione:</label><br>
+<input type="time" id="primaDose">
+<br><br>
+<button onclick="avviaCiclo()">Avvia ciclo</button>
+
+<table id="tabella" style="display:none;">
+<thead>
+<tr>
+<th>Dose</th>
+<th>Evento</th>
+<th>Orario previsto</th>
+<th>Orario reale</th>
+<th>Azione</th>
+</tr>
+</thead>
+<tbody></tbody>
+</table>
+
+<script>
+let eventi = [];
+
+function avviaCiclo() {
+  Notification.requestPermission();
+  const input = document.getElementById("primaDose").value;
+  if (!input) return alert("Inserisci un orario");
+
+  const [h,m] = input.split(":").map(Number);
+  let base = new Date();
+  base.setHours(h,m,0,0);
+
+  eventi = [];
+  const tbody = document.querySelector("tbody");
+  tbody.innerHTML = "";
+  document.getElementById("tabella").style.display="table";
+
+ for (let i=0;i<4;i++) {
+  let som = new Date(base.getTime() + i * 4 * 60 * 60 * 1000);
+
+  let inizioTracciato = new Date(som.getTime() - 30 * 60 * 1000);
+  let fineTracciato   = new Date(som.getTime() + 60 * 60 * 1000);
+
+  creaEvento(`Dose ${i+1} - Inizio tracciato`, inizioTracciato);
+  creaEvento(`Dose ${i+1} - Somministrazione`, som);
+  creaEvento(`Dose ${i+1} - Fine tracciato`, fineTracciato);
+}
+
+
+  eventi.forEach((e,idx)=>{
+    let tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${e.nome.split(" ")[1]}</td>
+      <td>${e.nome}</td>
+      <td>${formatta(e.previsto)}</td>
+      <td id="reale${idx}">—</td>
+      <td><button onclick="registra(${idx})">Registra</button></td>
+    `;
+    tbody.appendChild(tr);
+    pianificaNotifica(e.nome, e.previsto);
+  });
+}
+salvaDati();
+
+function creaEvento(nome, previsto) {
+  eventi.push({ nome, previsto, reale:null });
+}
+
+function registra(i) {
+  const oraReale = new Date();
+  eventi[i].reale = oraReale;
+  document.getElementById("reale"+i).innerText = formatta(oraReale);
+
+  const ritardo = Math.abs(oraReale - eventi[i].previsto) / 60000;
+
+  // soglia di 5 minuti
+  if (ritardo > 5) {
+    const scelta = confirm(
+      "Evento registrato in ritardo di circa " +
+      Math.round(ritardo) +
+      " minuti.\n\nVuoi ricalcolare gli eventi successivi?"
+    );
+
+    if (scelta) {
+      ricalcolaEventiSuccessivi(i, oraReale);
+    }
+  }
+}
+salvaDati();
+
+function ricalcolaEventiSuccessivi(indiceEvento, nuovaBase) {
+  for (let j = indiceEvento + 1; j < eventi.length; j++) {
+    let nome = eventi[j].nome;
+
+    if (nome.includes("Inizio tracciato")) {
+      // l'inizio tracciato resta 30 min prima della somministrazione successiva
+      eventi[j].previsto = new Date(nuovaBase.getTime());
+    }
+
+    if (nome.includes("Somministrazione")) {
+      // la somministrazione avviene 30 min dopo l'inizio tracciato
+      eventi[j].previsto = new Date(nuovaBase.getTime() + 30 * 60 * 1000);
+    }
+
+    if (nome.includes("Fine tracciato")) {
+      // fine tracciato 1h dopo la somministrazione
+      eventi[j].previsto = new Date(nuovaBase.getTime() + 30 * 60 * 1000 + 60 * 60 * 1000);
+    }
+
+    // aggiorna tabella
+    document.querySelectorAll("tbody tr")[j].children[2].innerText = formatta(eventi[j].previsto);
+
+    // nuovaBase per il prossimo evento = somministrazione
+    if (nome.includes("Somministrazione")) {
+      nuovaBase = eventi[j].previsto;
+    }
+  }
+}
+
+function pianificaNotifica(testo, orario) {
+  let delay = orario - new Date();
+  if (delay > 0) {
+    setTimeout(()=>{
+      new Notification(testo);
+    }, delay);
+  }
+}
+
+function formatta(d) {
+  return d.toLocaleTimeString("it-IT",{hour:"2-digit",minute:"2-digit"});
+}
+
+function salvaDati() {
+  localStorage.setItem("ciclo_induzione", JSON.stringify(eventi));
+}
+
+function caricaDati() {
+  const dati = localStorage.getItem("ciclo_induzione");
+  if (!dati) return;
+
+  eventi = JSON.parse(dati);
+
+  const tbody = document.querySelector("tbody");
+  tbody.innerHTML = "";
+  document.getElementById("tabella").style.display = "table";
+
+  eventi.forEach((e, idx) => {
+    e.previsto = new Date(e.previsto);
+    e.reale = e.reale ? new Date(e.reale) : null;
+
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${e.nome.split(" ")[1]}</td>
+      <td>${e.nome}</td>
+      <td>${formatta(e.previsto)}</td>
+      <td id="reale${idx}">${e.reale ? formatta(e.reale) : "—"}</td>
+      <td><button onclick="registra(${idx})">Registra</button></td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+window.onload = caricaDati;
+</script>
+
+</body>
+</html>
