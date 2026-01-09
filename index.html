@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<title>Ciclo induzione parto - Dashboard Pazienti</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#2c3e50">
+<style>
+body { margin:0; font-family: Arial; display:flex; height:100vh; }
+#sidebar { width:250px; background:#2c3e50; color:white; padding:20px; box-sizing:border-box; overflow-y:auto; }
+#sidebar h2 { font-size:18px; margin-top:0; }
+#sidebar input, #sidebar button { width:100%; margin:5px 0; padding:5px; }
+#sidebar ul { list-style:none; padding:0; margin:0; }
+#sidebar li { padding:8px; border-radius:4px; margin-bottom:5px; background:#34495e; display:flex; justify-content:space-between; align-items:center; }
+#sidebar li span { flex:1; cursor:pointer; }
+#sidebar li:hover { background:#1abc9c; }
+#sidebar li.active { background:#16a085; }
+#main { flex:1; padding:20px; overflow-y:auto; background:#ecf0f1; }
+table { width:100%; border-collapse: collapse; background:white; margin-top:10px; }
+th, td { border:1px solid #ccc; padding:8px; text-align:center; }
+th { background:#eee; }
+button { padding:5px 10px; margin:2px; }
+</style>
+</head>
+<body>
+
+<div id="sidebar">
+  <h2>Pazienti</h2>
+  <input type="text" id="nomePaziente" placeholder="Nome paziente">
+  <input type="time" id="primaDose">
+  <button onclick="aggiungiPaziente()">Aggiungi paziente</button>
+  <ul id="listaPazienti"></ul>
+</div>
+
+<div id="main">
+  <h2 id="titoloPaziente">Seleziona un paziente</h2>
+  <div id="schedaPaziente"></div>
+</div>
+
+<script>
+let pazienti = [];
+let pazienteSelezionato = null;
+
+function formatta(d){ return d.toLocaleTimeString("it-IT",{hour:"2-digit",minute:"2-digit"}); }
+
+function aggiungiPaziente(){
+  const nome = document.getElementById("nomePaziente").value.trim();
+  const oraInput = document.getElementById("primaDose").value;
+  if(!nome || !oraInput) return alert("Inserisci nome e orario");
+
+  const [h,m] = oraInput.split(":").map(Number);
+  let base = new Date(); base.setHours(h,m,0,0);
+
+  const eventi = [];
+  for(let i=0;i<4;i++){
+    let som = new Date(base.getTime() + i*4*60*60*1000);
+    let inizio = new Date(som.getTime() - 30*60*1000);
+    let fine = new Date(som.getTime() + 60*60*1000);
+    eventi.push({nome:`Dose ${i+1} - Inizio tracciato`, previsto:inizio, reale:null, notificato:false});
+    eventi.push({nome:`Dose ${i+1} - Somministrazione`, previsto:som, reale:null, notificato:false});
+    eventi.push({nome:`Dose ${i+1} - Fine tracciato`, previsto:fine, reale:null, notificato:false});
+  }
+
+  pazienti.push({nome,eventi});
+  salvaDati();
+  mostraSidebar();
+  selezionaPaziente(pazienti.length-1);
+
+  document.getElementById("nomePaziente").value="";
+  document.getElementById("primaDose").value="";
+}
+
+function mostraSidebar(){
+  const ul = document.getElementById("listaPazienti");
+  ul.innerHTML="";
+  pazienti.forEach((p,idx)=>{
+    const li = document.createElement("li");
+    li.innerHTML = `<span>${p.nome}</span><button style="background:red;color:white;border:none;padding:2px 5px;border-radius:3px;">X</button>`;
+    li.querySelector("span").onclick = ()=>selezionaPaziente(idx);
+    li.querySelector("button").onclick = e=>{
+      e.stopPropagation();
+      if(confirm(`Eliminare il paziente ${p.nome}?`)) eliminaPaziente(idx);
+    };
+    if(idx===pazienteSelezionato) li.classList.add("active");
+    ul.appendChild(li);
+  });
+}
+
+function selezionaPaziente(idx){
+  pazienteSelezionato = idx;
+  document.getElementById("titoloPaziente").textContent = pazienti[idx].nome;
+  mostraSidebar();
+  mostraScheda();
+}
+
+function mostraScheda(){
+  if(pazienteSelezionato===null) return;
+  const container = document.getElementById("schedaPaziente");
+  container.innerHTML="";
+  const paziente = pazienti[pazienteSelezionato];
+
+  const table = document.createElement("table");
+  table.innerHTML=`<thead><tr><th>Dose</th><th>Evento</th><th>Orario previsto</th><th>Orario reale</th><th>Azione</th></tr></thead>`;
+  const tbody = document.createElement("tbody");
+  table.appendChild(tbody);
+  container.appendChild(table);
+
+  paziente.eventi.forEach((e,idx)=>{
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${e.nome.split(" ")[1]}</td>
+      <td>${e.nome}</td>
+      <td>${formatta(e.previsto)}</td>
+      <td id="reale-${idx}">${e.reale ? formatta(e.reale) : "—"}</td>
+      <td><button onclick="registraEvento(${idx})">Registra</button></td>`;
+    tbody.appendChild(tr);
+    inviaNotifica(e); // Notifica automatica
+  });
+}
+
+function registraEvento(idxEvento){
+  if(pazienteSelezionato===null) return;
+  const evento = pazienti[pazienteSelezionato].eventi[idxEvento];
+  const oraReale = new Date();
+  evento.reale = oraReale;
+  document.getElementById(`reale-${idxEvento}`).innerText = formatta(oraReale);
+
+  if(evento.nome.includes("Inizio tracciato") || evento.nome.includes("Somministrazione")){
+    ricalcolaEventiSuccessivi(idxEvento, oraReale);
+  }
+
+  salvaDati();
+  inviaNotifica(evento);
+}
+
+function ricalcolaEventiSuccessivi(idxEvento, nuovaBase){
+  const eventi = pazienti[pazienteSelezionato].eventi;
+  for(let j=idxEvento+1;j<eventi.length;j++){
+    const e = eventi[j];
+    if(e.nome.includes("Inizio tracciato")) e.previsto = new Date(nuovaBase.getTime());
+    else if(e.nome.includes("Somministrazione")){
+      e.previsto = new Date(nuovaBase.getTime() + 30*60*1000);
+      nuovaBase = e.previsto;
+    }
+    const cell = document.getElementById(`reale-${j}`);
+    if(cell) cell.parentElement.children[2].innerText = formatta(e.previsto);
+  }
+}
+
+function eliminaPaziente(idx){
+  pazienti.splice(idx,1);
+  if(pazienteSelezionato===idx) pazienteSelezionato=null;
+  else if(pazienteSelezionato>idx) pazienteSelezionato--;
+  salvaDati();
+  mostraSidebar();
+  if(pazienti.length>0){
+    if(pazienteSelezionato===null) selezionaPaziente(0);
+    else selezionaPaziente(pazienteSelezionato);
+  } else {
+    document.getElementById("titoloPaziente").textContent="Seleziona un paziente";
+    document.getElementById("schedaPaziente").innerHTML="";
+  }
+}
+
+// Notifiche affidabili
+function inviaNotifica(evento){
+  if(!("Notification" in window)) return;
+  if(evento.notificato) return;
+
+  const ora = new Date();
+  if(ora >= evento.previsto){
+    Notification.requestPermission().then(perm=>{
+      if(perm==="granted") new Notification(evento.nome);
+    });
+    evento.notificato = true;
+    salvaDati();
+  } else {
+    const delay = evento.previsto - ora;
+    setTimeout(()=>{
+      Notification.requestPermission().then(perm=>{
+        if(perm==="granted") new Notification(evento.nome);
+      });
+      evento.notificato = true;
+      salvaDati();
+    }, delay);
+  }
+}
+
+function salvaDati(){ localStorage.setItem("pazienti_induzione", JSON.stringify(pazienti)); }
+
+function caricaDati(){
+  if("Notification" in window) Notification.requestPermission();
+  const dati = localStorage.getItem("pazienti_induzione");
+  if(!dati) return;
+  pazienti = JSON.parse(dati);
+  pazienti.forEach(p=>p.eventi.forEach(e=>{
+    e.previsto = new Date(e.previsto);
+    e.reale = e.reale ? new Date(e.reale) : null;
+    if(e.notificato===undefined) e.notificato=false;
+  }));
+  mostraSidebar();
+  if(pazienti.length>0) selezionaPaziente(0);
+}
+window.onload = caricaDati;
+
+// Service Worker per offline
+if('serviceWorker' in navigator){
+  navigator.serviceWorker.register('./sw.js').then(()=>console.log("Service Worker registrato"));
+}
+</script>
+</body>
+</html>
