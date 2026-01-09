@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<title>Ciclo induzione parto - Multi-paziente</title>
+<style>
+body { font-family: Arial; margin: 30px; background: #f7f7f7; }
+table { width:100%; border-collapse: collapse; background:white; margin-top:10px; }
+th, td { border:1px solid #ccc; padding:8px; text-align:center; }
+th { background:#eee; }
+button { padding:5px 10px; margin:2px; }
+h2 { margin-top:20px; }
+</style>
+</head>
+<body>
+
+<h1>Ciclo di induzione - Multi-paziente</h1>
+
+<label>Nome paziente:</label><br>
+<input type="text" id="nomePaziente" placeholder="Es. Rossi"><br><br>
+
+<label>Ora prima somministrazione:</label><br>
+<input type="time" id="primaDose"><br><br>
+
+<button onclick="aggiungiPaziente()">Aggiungi paziente e avvia ciclo</button>
+
+<div id="pazientiContainer"></div>
+
+<script>
+let pazienti = [];
+
+// FORMATTA DATI
+function formatta(d) {
+  return d.toLocaleTimeString("it-IT",{hour:"2-digit",minute:"2-digit"});
+}
+
+// AGGIUNGI PAZIENTE E CICLO
+function aggiungiPaziente() {
+  const nome = document.getElementById("nomePaziente").value.trim();
+  const oraInput = document.getElementById("primaDose").value;
+  if (!nome || !oraInput) return alert("Inserisci nome e orario");
+
+  const [h,m] = oraInput.split(":").map(Number);
+  let base = new Date();
+  base.setHours(h,m,0,0);
+
+  const eventi = [];
+  for (let i=0;i<4;i++) {
+    let som = new Date(base.getTime() + i*4*60*60*1000);
+    let inizioTracciato = new Date(som.getTime() - 30*60*1000);
+    let fineTracciato   = new Date(som.getTime() + 60*60*1000);
+
+    eventi.push({ nome:`Dose ${i+1} - Inizio tracciato`, previsto: inizioTracciato, reale:null });
+    eventi.push({ nome:`Dose ${i+1} - Somministrazione`, previsto: som, reale:null });
+    eventi.push({ nome:`Dose ${i+1} - Fine tracciato`, previsto: fineTracciato, reale:null });
+  }
+
+  pazienti.push({ nome, eventi });
+  salvaDati();
+  mostraPazienti();
+}
+
+// MOSTRA TUTTI I PAZIENTI
+function mostraPazienti() {
+  const container = document.getElementById("pazientiContainer");
+  container.innerHTML = "";
+
+  pazienti.forEach((paziente, pIdx) => {
+    const h2 = document.createElement("h2");
+    h2.textContent = paziente.nome;
+    container.appendChild(h2);
+
+    const table = document.createElement("table");
+    table.innerHTML = `
+      <thead>
+        <tr>
+          <th>Dose</th>
+          <th>Evento</th>
+          <th>Orario previsto</th>
+          <th>Orario reale</th>
+          <th>Azione</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    `;
+    container.appendChild(table);
+
+    paziente.eventi.forEach((e, idx) => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td>${e.nome.split(" ")[1]}</td>
+        <td>${e.nome}</td>
+        <td>${formatta(e.previsto)}</td>
+        <td id="reale-${pIdx}-${idx}">${e.reale ? formatta(e.reale) : "—"}</td>
+        <td><button onclick="registraEvento(${pIdx}, ${idx})">Registra</button></td>
+      `;
+      table.querySelector("tbody").appendChild(tr);
+
+      // Notifica browser
+      pianificaNotifica(e.nome + " (" + paziente.nome + ")", e.previsto);
+    });
+  });
+}
+
+// REGISTRA EVENTO
+function registraEvento(pIdx, eIdx) {
+  const evento = pazienti[pIdx].eventi[eIdx];
+  const oraReale = new Date();
+  evento.reale = oraReale;
+  document.getElementById(`reale-${pIdx}-${eIdx}`).innerText = formatta(oraReale);
+
+  const ritardo = Math.abs(oraReale - evento.previsto)/60000;
+  if (ritardo > 5) {
+    const scelta = confirm(
+      "Evento registrato in ritardo di circa " + Math.round(ritardo) +
+      " minuti.\n\nVuoi ricalcolare gli eventi successivi?"
+    );
+    if (scelta) ricalcolaEventiSuccessiviMulti(pIdx, eIdx, oraReale);
+  }
+
+  salvaDati();
+}
+
+// RICALCOLO EVENTI SUCCESSIVI
+function ricalcolaEventiSuccessiviMulti(pIdx, indiceEvento, nuovaBase) {
+  const eventi = pazienti[pIdx].eventi;
+  for (let j = indiceEvento+1; j<eventi.length; j++) {
+    let nome = eventi[j].nome;
+    if (nome.includes("Inizio tracciato")) eventi[j].previsto = new Date(nuovaBase.getTime());
+    if (nome.includes("Somministrazione")) eventi[j].previsto = new Date(nuovaBase.getTime() + 30*60*1000);
+    if (nome.includes("Fine tracciato")) eventi[j].previsto = new Date(nuovaBase.getTime() + 30*60*1000 + 60*60*1000);
+
+    document.getElementById(`reale-${pIdx}-${j}`)?.parentElement.children[2].innerText = formatta(eventi[j].previsto);
+    if (nome.includes("Somministrazione")) nuovaBase = eventi[j].previsto;
+  }
+  salvaDati();
+}
+
+// NOTIFICHE BROWSER
+function pianificaNotifica(testo, orario) {
+  const delay = orario - new Date();
+  if (delay > 0) {
+    setTimeout(() => {
+      if ("Notification" in window) {
+        Notification.requestPermission().then(perm => {
+          if (perm === "granted") new Notification(testo);
+        });
+      }
+    }, delay);
+  }
+}
+
+// SALVATAGGIO
+function salvaDati() {
+  localStorage.setItem("pazienti_induzione", JSON.stringify(pazienti));
+}
+
+// CARICAMENTO
+function caricaDati() {
+  const dati = localStorage.getItem("pazienti_induzione");
+  if (!dati) return;
+  pazienti = JSON.parse(dati);
+  pazienti.forEach(p => p.eventi.forEach(e => {
+    e.previsto = new Date(e.previsto);
+    e.reale = e.reale ? new Date(e.reale) : null;
+  }));
+  mostraPazienti();
+}
+
+window.onload = caricaDati;
+
+</script>
+</body>
+</html>
